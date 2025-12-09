@@ -96,13 +96,11 @@ enum ControlFlow {
 }
 
 impl Command {
-  fn from_split(args: Vec<String>, paths: &Vec<PathBuf>) -> Self {
-    let mut args = args.into_iter();
-    let command = args.next().unwrap();
-    Self { kind: CommandKind::parse(&command, paths), args: args.collect() }
+  fn from_split(command: String, args: Vec<String>, paths: &Vec<PathBuf>) -> Self {
+    Self { kind: CommandKind::parse(&command, paths), args }
   }
 
-  fn run(&self, paths: &Vec<PathBuf>, control_flow: &mut ControlFlow) {
+  fn run(&self, paths: &Vec<PathBuf>, control_flow: &mut ControlFlow, mut stdout: Box<dyn Write>) {
     use Builtin::*;
     match &self.kind {
       CommandKind::Builtin(Exit) => *control_flow = ControlFlow::Exit,
@@ -110,11 +108,11 @@ impl Command {
         for arg in &self.args {
           match CommandKind::parse(arg, paths) {
             CommandKind::Builtin(builtin) => {
-              println!("{} is a shell builtin", builtin.to_string());
+              writeln!(stdout, "{} is a shell builtin", builtin.to_string()).unwrap();
               io::stdout().flush().unwrap();
             }
             CommandKind::Program(path) => {
-              println!("{}", path.display());
+              writeln!(stdout, "{}", path.display()).unwrap();
               io::stdout().flush().unwrap();
             }
             CommandKind::NotFound(name) => {
@@ -125,12 +123,12 @@ impl Command {
         }
       }
       CommandKind::Builtin(Echo) => {
-        println!("{}", self.args.join(" "));
+        writeln!(stdout, "{}", self.args.join(" ")).unwrap();
         io::stdout().flush().unwrap();
       }
       CommandKind::Builtin(Pwd) => {
         let path = std::env::current_dir().unwrap();
-        println!("{}", path.display());
+        writeln!(stdout, "{}", path.display()).unwrap();
         io::stdout().flush().unwrap();
       }
       CommandKind::Builtin(Cd) => {
@@ -147,7 +145,7 @@ impl Command {
           .output()
           .expect("Running command failed");
         if output.status.success() {
-          print!("{}", str::from_utf8(&output.stdout).unwrap());
+          write!(stdout, "{}", str::from_utf8(&output.stdout).unwrap()).unwrap();
           io::stdout().flush().unwrap();
         } else {
           eprint!("{}", str::from_utf8(&output.stderr).unwrap());
@@ -155,7 +153,7 @@ impl Command {
         }
       }
       CommandKind::NotFound(name) => {
-        println!("{name}: command not found")
+        eprintln!("{name}: command not found")
       }
     }
   }
@@ -174,8 +172,32 @@ fn main() {
     io::stdin().read_line(&mut input).expect("Expected command");
 
     if let Ok(args) = split(&input) {
-      let command = Command::from_split(args, &paths);
-      command.run(&paths, &mut control_flow);
+      let mut args = args.into_iter();
+      let Some(command) = args.next() else { continue };
+      enum State {
+        RedirectStdout,
+        Arg,
+      }
+      use State::*;
+      let mut state = Arg;
+      let mut actual_args = vec![];
+      let mut stdout: Box<dyn Write> = Box::new(std::io::stdout());
+      for arg in args {
+        state = match state {
+          Arg => match arg.as_str() {
+            ">" | "1>" => RedirectStdout,
+            _ => {
+              actual_args.push(arg);
+              Arg
+            }
+          },
+          RedirectStdout => {
+            stdout = Box::new(std::fs::File::create(arg).unwrap());
+            Arg
+          }
+        }
+      }
+      Command::from_split(command, actual_args, &paths).run(&paths, &mut control_flow, stdout);
     } else {
       eprintln!("Syntax error");
       io::stderr().flush().unwrap();
