@@ -29,62 +29,138 @@ fn search(paths: &Vec<PathBuf>, command: &str) -> Option<String> {
   None
 }
 
+enum Builtin {
+  Exit,
+  Type,
+  Echo,
+  Pwd,
+}
+
+impl Builtin {
+  fn try_parse(command: &str) -> Option<Self> {
+    use Builtin::*;
+    let command = command.trim();
+    match command {
+      "exit" => Some(Exit),
+      "type" => Some(Type),
+      "echo" => Some(Echo),
+      "pwd" => Some(Pwd),
+      _ => None,
+    }
+  }
+
+  fn to_string(&self) -> &'static str {
+    use Builtin::*;
+    match self {
+      Exit => "exit",
+      Type => "type",
+      Echo => "echo",
+      Pwd => "pwd",
+    }
+  }
+}
+
+enum CommandKind<'a> {
+  Builtin(Builtin),
+  Program(String),
+  NotFound(&'a str),
+}
+
+impl<'a> CommandKind<'a> {
+  fn parse(command: &'a str, paths: &Vec<PathBuf>) -> Self {
+    let command = command.trim();
+    if let Some(builtin) = Builtin::try_parse(command) {
+      CommandKind::Builtin(builtin)
+    } else if let Some(program) = search(paths, command) {
+      CommandKind::Program(program)
+    } else {
+      CommandKind::NotFound(command)
+    }
+  }
+}
+
+struct Command<'a> {
+  kind: CommandKind<'a>,
+  args: Vec<&'a str>,
+}
+
+enum ControlFlow {
+  Repl,
+  Exit,
+}
+
+impl<'a> Command<'a> {
+  fn from_iter(args: impl IntoIterator<Item = &'a str>, paths: &Vec<PathBuf>) -> Self {
+    let mut args = args.into_iter();
+    let command = args.next().unwrap();
+    Self { kind: CommandKind::parse(command, paths), args: args.collect() }
+  }
+
+  fn run(&self, paths: &Vec<PathBuf>, control_flow: &mut ControlFlow) {
+    use Builtin::*;
+    match &self.kind {
+      CommandKind::Builtin(Exit) => *control_flow = ControlFlow::Exit,
+      CommandKind::Builtin(Type) => {
+        for &arg in &self.args {
+          match CommandKind::parse(arg, paths) {
+            CommandKind::Builtin(builtin) => {
+              println!("{} is a shell builtin", builtin.to_string());
+              io::stdout().flush().unwrap();
+            }
+            CommandKind::Program(path) => {
+              println!("{path}");
+              io::stdout().flush().unwrap();
+            }
+            CommandKind::NotFound(name) => {
+              eprintln!("{name}: not found");
+              io::stderr().flush().unwrap();
+            }
+          }
+        }
+      }
+      CommandKind::Builtin(Echo) => {
+        println!("{}", self.args.join(" "));
+        io::stdout().flush().unwrap();
+      }
+      CommandKind::Builtin(Pwd) => {
+        let path = std::env::current_dir().unwrap();
+        println!("{}", path.display());
+        io::stdout().flush().unwrap();
+      }
+      CommandKind::Program(path) => {
+        let output = std::process::Command::new(path)
+          .args(&self.args)
+          .output()
+          .expect("Running command failed");
+        if output.status.success() {
+          print!("{}", str::from_utf8(&output.stdout).unwrap());
+          io::stdout().flush().unwrap();
+        } else {
+          eprint!("{}", str::from_utf8(&output.stderr).unwrap());
+          io::stderr().flush().unwrap();
+        }
+      }
+      CommandKind::NotFound(name) => {
+        println!("{name}: command not found")
+      }
+    }
+  }
+}
+
 fn main() {
   let path = std::env::var("PATH").unwrap();
   let paths: Vec<_> = std::env::split_paths(&path).collect();
+  let mut control_flow = ControlFlow::Repl;
 
-  loop {
+  while let ControlFlow::Repl = &control_flow {
     print!("$ ");
     io::stdout().flush().unwrap();
 
     let mut input = String::new();
     io::stdin().read_line(&mut input).expect("Expected command");
-    let mut args = input.trim().split(" ").collect::<Vec<_>>().into_iter();
-    let command = args.next().unwrap();
+    let args = input.trim().split(" ").collect::<Vec<_>>().into_iter();
 
-    match command.trim() {
-      "exit" => break,
-      "echo" => {
-        let rest = args.collect::<Vec<_>>().join(" ");
-        println!("{rest}")
-      }
-      "type" => {
-        let command = args.next().expect("Expected argument");
-        match command {
-          "echo" | "exit" | "type" => {
-            println!("{command} is a shell builtin");
-            io::stdout().flush().unwrap();
-          }
-          _ => match search(&paths, command) {
-            Some(path) => {
-              println!("{command} is {path}");
-              io::stdout().flush().unwrap();
-            }
-            None => {
-              println!("{command}: not found");
-              io::stdout().flush().unwrap();
-            }
-          },
-        }
-      }
-      command => match search(&paths, command) {
-        Some(_program) => {
-          let output = std::process::Command::new(command)
-            .args(args)
-            .output()
-            .expect("Running command failed");
-          if output.status.success() {
-            print!("{}", str::from_utf8(&output.stdout).unwrap());
-          } else {
-            print!("{}", str::from_utf8(&output.stderr).unwrap());
-          }
-          io::stdout().flush().unwrap();
-        }
-        None => {
-          println!("{command}: command not found");
-          io::stdout().flush().unwrap();
-        }
-      },
-    }
+    let command = Command::from_iter(args, &paths);
+    command.run(&paths, &mut control_flow);
   }
 }
