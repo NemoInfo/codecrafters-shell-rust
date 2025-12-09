@@ -9,6 +9,7 @@ enum State {
   DoubleQuoted,
   Unquoted,
   Backslash,
+  DoubleQuotedBackslash,
 }
 
 pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
@@ -60,6 +61,7 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
       DoubleQuoted => match c {
         None => return Err(ParseError),
         Some('\"') => Unquoted,
+        Some('\\') => DoubleQuotedBackslash,
         Some(c) => {
           word.push(c);
           DoubleQuoted
@@ -75,6 +77,19 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
         Some(c) => {
           word.push(c);
           Unquoted
+        }
+      },
+      DoubleQuotedBackslash => match c {
+        None => return Err(ParseError),
+        Some('\n') => DoubleQuoted,
+        Some(c) if ['$', '`', '"', '\\'].contains(&c) => {
+          word.push(c);
+          DoubleQuoted
+        }
+        Some(c) => {
+          word.push('\\');
+          word.push(c);
+          DoubleQuoted
         }
       },
     }
