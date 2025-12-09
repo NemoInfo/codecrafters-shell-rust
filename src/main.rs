@@ -144,13 +144,11 @@ impl Command {
           .args(&self.args)
           .output()
           .expect("Running command failed");
-        if output.status.success() {
-          write!(stdout, "{}", str::from_utf8(&output.stdout).unwrap()).unwrap();
-          io::stdout().flush().unwrap();
-        } else {
-          eprint!("{}", str::from_utf8(&output.stderr).unwrap());
-          io::stderr().flush().unwrap();
-        }
+
+        write!(stdout, "{}", str::from_utf8(&output.stdout).unwrap()).unwrap();
+        io::stdout().flush().unwrap();
+        eprint!("{}", str::from_utf8(&output.stderr).unwrap());
+        io::stderr().flush().unwrap();
       }
       CommandKind::NotFound(name) => {
         eprintln!("{name}: command not found")
