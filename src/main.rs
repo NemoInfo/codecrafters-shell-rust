@@ -180,6 +180,8 @@ fn main() {
       let mut args = args.into_iter();
       let Some(command) = args.next() else { continue };
       enum State {
+        AppendStdout,
+        AppendStderr,
         RedirectStdout,
         RedirectStderr,
         Arg,
@@ -192,6 +194,8 @@ fn main() {
       for arg in args {
         state = match state {
           Arg => match arg.as_str() {
+            "2>>"  => AppendStderr,
+            ">>" | "1>>" => AppendStdout,
             ">" | "1>" => RedirectStdout,
             "2>" => RedirectStderr,
             _ => {
@@ -199,6 +203,16 @@ fn main() {
               Arg
             }
           },
+          AppendStdout => {
+            stdout =
+              Box::new(std::fs::OpenOptions::new().append(true).create(true).open(arg).unwrap());
+            Arg
+          }
+          AppendStderr => {
+            stderr =
+              Box::new(std::fs::OpenOptions::new().append(true).create(true).open(arg).unwrap());
+            Arg
+          }
           RedirectStdout => {
             stdout = Box::new(std::fs::File::create(arg).unwrap());
             Arg
