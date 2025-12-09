@@ -74,10 +74,11 @@ fn main() {
             .output()
             .expect("Running command failed");
           if output.status.success() {
-            println!("{}", str::from_utf8(&output.stdout).unwrap());
+            print!("{}", str::from_utf8(&output.stdout).unwrap());
           } else {
-            println!("{}", str::from_utf8(&output.stderr).unwrap());
+            print!("{}", str::from_utf8(&output.stderr).unwrap());
           }
+          io::stdout().flush().unwrap();
         }
         None => {
           println!("{command}: command not found");
