@@ -6,6 +6,7 @@ pub struct ParseError;
 enum State {
   Delimiter,
   SingleQuoted,
+  DoubleQuoted,
   Unquoted,
 }
 
@@ -22,6 +23,7 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
       Delimiter => match c {
         None => break,
         Some('\'') => SingleQuoted,
+        Some('\"') => DoubleQuoted,
         Some(w) if w.is_whitespace() => Delimiter,
         Some(c) => {
           word.push(c);
@@ -49,6 +51,14 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
         Some(c) => {
           word.push(c);
           SingleQuoted
+        }
+      },
+      DoubleQuoted => match c {
+        None => return Err(ParseError),
+        Some('\"') => Unquoted,
+        Some(c) => {
+          word.push(c);
+          DoubleQuoted
         }
       },
     }
