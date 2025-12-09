@@ -68,8 +68,8 @@ fn main() {
         }
       }
       command => match search(&paths, command) {
-        Some(program) => {
-          let output = std::process::Command::new(program)
+        Some(_program) => {
+          let output = std::process::Command::new(command)
             .args(args)
             .output()
             .expect("Running command failed");
