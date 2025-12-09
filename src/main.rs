@@ -4,6 +4,9 @@ use std::{
   path::PathBuf,
 };
 
+mod split;
+use split::*;
+
 fn search(paths: &Vec<PathBuf>, command: &str) -> Option<PathBuf> {
   for path in paths {
     if path.is_file() {
@@ -20,7 +23,7 @@ fn search(paths: &Vec<PathBuf>, command: &str) -> Option<PathBuf> {
           let name = path.file_name()?.to_str()?;
           let is_exec = path.metadata().ok()?.permissions().mode() & 0o111 != 0;
           if name == command && is_exec {
-            return Some(path.into());
+            return Some(path);
           }
         }
       }
@@ -63,28 +66,28 @@ impl Builtin {
   }
 }
 
-enum CommandKind<'a> {
+enum CommandKind {
   Builtin(Builtin),
   Program(PathBuf),
-  NotFound(&'a str),
+  NotFound(String),
 }
 
-impl<'a> CommandKind<'a> {
-  fn parse(command: &'a str, paths: &Vec<PathBuf>) -> Self {
+impl CommandKind {
+  fn parse(command: &str, paths: &Vec<PathBuf>) -> Self {
     let command = command.trim();
     if let Some(builtin) = Builtin::try_parse(command) {
       CommandKind::Builtin(builtin)
     } else if let Some(program) = search(paths, command) {
       CommandKind::Program(program)
     } else {
-      CommandKind::NotFound(command)
+      CommandKind::NotFound(command.to_owned())
     }
   }
 }
 
-struct Command<'a> {
-  kind: CommandKind<'a>,
-  args: Vec<&'a str>,
+struct Command {
+  kind: CommandKind,
+  args: Vec<String>,
 }
 
 enum ControlFlow {
@@ -92,11 +95,11 @@ enum ControlFlow {
   Exit,
 }
 
-impl<'a> Command<'a> {
-  fn from_iter(args: impl IntoIterator<Item = &'a str>, paths: &Vec<PathBuf>) -> Self {
+impl Command {
+  fn from_split(args: Vec<String>, paths: &Vec<PathBuf>) -> Self {
     let mut args = args.into_iter();
     let command = args.next().unwrap();
-    Self { kind: CommandKind::parse(command, paths), args: args.collect() }
+    Self { kind: CommandKind::parse(&command, paths), args: args.collect() }
   }
 
   fn run(&self, paths: &Vec<PathBuf>, control_flow: &mut ControlFlow) {
@@ -104,7 +107,7 @@ impl<'a> Command<'a> {
     match &self.kind {
       CommandKind::Builtin(Exit) => *control_flow = ControlFlow::Exit,
       CommandKind::Builtin(Type) => {
-        for &arg in &self.args {
+        for arg in &self.args {
           match CommandKind::parse(arg, paths) {
             CommandKind::Builtin(builtin) => {
               println!("{} is a shell builtin", builtin.to_string());
@@ -132,7 +135,7 @@ impl<'a> Command<'a> {
       }
       CommandKind::Builtin(Cd) => {
         let home = std::env::var("HOME").unwrap();
-        let path: PathBuf = self.args.first().unwrap_or(&"~").replace("~", &home).into();
+        let path: PathBuf = self.args.first().unwrap_or(&"~".to_owned()).replace("~", &home).into();
         std::env::set_current_dir(&path).unwrap_or_else(|_| {
           eprintln!("cd: {}: No such file or directory", path.display());
           io::stderr().flush().unwrap();
@@ -169,9 +172,13 @@ fn main() {
 
     let mut input = String::new();
     io::stdin().read_line(&mut input).expect("Expected command");
-    let args = input.trim().split(" ").collect::<Vec<_>>().into_iter();
 
-    let command = Command::from_iter(args, &paths);
-    command.run(&paths, &mut control_flow);
+    if let Ok(args) = split(&input) {
+      let command = Command::from_split(args, &paths);
+      command.run(&paths, &mut control_flow);
+    } else {
+      eprintln!("Syntax error");
+      io::stderr().flush().unwrap();
+    }
   }
 }
