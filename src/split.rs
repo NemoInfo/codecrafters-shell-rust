@@ -8,6 +8,7 @@ enum State {
   SingleQuoted,
   DoubleQuoted,
   Unquoted,
+  Backslash,
 }
 
 pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
@@ -24,6 +25,7 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
         None => break,
         Some('\'') => SingleQuoted,
         Some('\"') => DoubleQuoted,
+        Some('\\') => Backslash,
         Some(w) if w.is_whitespace() => Delimiter,
         Some(c) => {
           word.push(c);
@@ -37,6 +39,7 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
         }
         Some('\'') => SingleQuoted,
         Some('\"') => DoubleQuoted,
+        Some('\\') => Backslash,
         Some(w) if w.is_whitespace() => {
           words.push(mem::take(&mut word));
           Delimiter
@@ -60,6 +63,18 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
         Some(c) => {
           word.push(c);
           DoubleQuoted
+        }
+      },
+      Backslash => match c {
+        None => {
+          word.push('\\');
+          words.push(mem::take(&mut word));
+          break;
+        }
+        Some('\n') => Delimiter,
+        Some(c) => {
+          word.push(c);
+          Unquoted
         }
       },
     }
