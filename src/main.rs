@@ -67,10 +67,23 @@ fn main() {
           },
         }
       }
-      invalid => {
-        println!("{}: command not found", invalid);
-        io::stdout().flush().unwrap();
-      }
+      command => match search(&paths, command) {
+        Some(program) => {
+          let output = std::process::Command::new(program)
+            .args(args)
+            .output()
+            .expect("Running command failed");
+          if output.status.success() {
+            println!("{}", str::from_utf8(&output.stdout).unwrap());
+          } else {
+            println!("{}", str::from_utf8(&output.stderr).unwrap());
+          }
+        }
+        None => {
+          println!("{command}: command not found");
+          io::stdout().flush().unwrap();
+        }
+      },
     }
   }
 }
