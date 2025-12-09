@@ -16,9 +16,22 @@ fn main() {
         let rest = args.collect::<Vec<_>>().join(" ");
         println!("{rest}")
       }
+      "type" => {
+        let command = args.next().expect("Expected argument");
+        match command {
+          "echo" | "exit" => {
+            println!("{command} is a shell builtin");
+            io::stdout().flush().unwrap();
+          }
+          _ => {
+            println!("{command}: command not found");
+            io::stdout().flush().unwrap();
+          }
+        }
+      }
       invalid => {
-        io::stdout().flush().unwrap();
         println!("{}: command not found", invalid);
+        io::stdout().flush().unwrap();
       }
     }
   }
