@@ -19,7 +19,7 @@ fn main() {
       "type" => {
         let command = args.next().expect("Expected argument");
         match command {
-          "echo" | "exit" => {
+          "echo" | "exit" | "type" => {
             println!("{command} is a shell builtin");
             io::stdout().flush().unwrap();
           }
