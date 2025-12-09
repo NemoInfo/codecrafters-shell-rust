@@ -24,7 +24,7 @@ fn main() {
             io::stdout().flush().unwrap();
           }
           _ => {
-            println!("{command}: command not found");
+            println!("{command}: not found");
             io::stdout().flush().unwrap();
           }
         }
