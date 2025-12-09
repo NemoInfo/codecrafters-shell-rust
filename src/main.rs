@@ -131,7 +131,8 @@ impl<'a> Command<'a> {
         io::stdout().flush().unwrap();
       }
       CommandKind::Builtin(Cd) => {
-        let path: PathBuf = self.args[0].into();
+        let home = std::env::var("HOME").unwrap();
+        let path: PathBuf = self.args.first().unwrap_or(&"~").replace("~", &home).into();
         std::env::set_current_dir(&path).unwrap_or_else(|_| {
           eprintln!("cd: {}: No such file or directory", path.display());
           io::stderr().flush().unwrap();
