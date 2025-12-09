@@ -34,6 +34,7 @@ enum Builtin {
   Type,
   Echo,
   Pwd,
+  Cd,
 }
 
 impl Builtin {
@@ -45,6 +46,7 @@ impl Builtin {
       "type" => Some(Type),
       "echo" => Some(Echo),
       "pwd" => Some(Pwd),
+      "cd" => Some(Cd),
       _ => None,
     }
   }
@@ -56,6 +58,7 @@ impl Builtin {
       Type => "type",
       Echo => "echo",
       Pwd => "pwd",
+      Cd => "cd",
     }
   }
 }
@@ -126,6 +129,13 @@ impl<'a> Command<'a> {
         let path = std::env::current_dir().unwrap();
         println!("{}", path.display());
         io::stdout().flush().unwrap();
+      }
+      CommandKind::Builtin(Cd) => {
+        let path: PathBuf = self.args[0].into();
+        std::env::set_current_dir(&path).unwrap_or_else(|_| {
+          eprintln!("cd {}: No such file or directory", path.display());
+          io::stderr().flush().unwrap();
+        });
       }
       CommandKind::Program(path) => {
         let output = std::process::Command::new(path.file_name().unwrap())
