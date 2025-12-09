@@ -100,7 +100,13 @@ impl Command {
     Self { kind: CommandKind::parse(&command, paths), args }
   }
 
-  fn run(&self, paths: &Vec<PathBuf>, control_flow: &mut ControlFlow, mut stdout: Box<dyn Write>) {
+  fn run(
+    &self,
+    paths: &Vec<PathBuf>,
+    control_flow: &mut ControlFlow,
+    mut stdout: Box<dyn Write>,
+    mut stderr: Box<dyn Write>,
+  ) {
     use Builtin::*;
     match &self.kind {
       CommandKind::Builtin(Exit) => *control_flow = ControlFlow::Exit,
@@ -116,7 +122,7 @@ impl Command {
               io::stdout().flush().unwrap();
             }
             CommandKind::NotFound(name) => {
-              eprintln!("{name}: not found");
+              writeln!(stderr, "{name}: not found").unwrap();
               io::stderr().flush().unwrap();
             }
           }
@@ -135,7 +141,7 @@ impl Command {
         let home = std::env::var("HOME").unwrap();
         let path: PathBuf = self.args.first().unwrap_or(&"~".to_owned()).replace("~", &home).into();
         std::env::set_current_dir(&path).unwrap_or_else(|_| {
-          eprintln!("cd: {}: No such file or directory", path.display());
+          writeln!(stderr, "cd: {}: No such file or directory", path.display()).unwrap();
           io::stderr().flush().unwrap();
         });
       }
@@ -146,12 +152,13 @@ impl Command {
           .expect("Running command failed");
 
         write!(stdout, "{}", str::from_utf8(&output.stdout).unwrap()).unwrap();
-        io::stdout().flush().unwrap();
-        eprint!("{}", str::from_utf8(&output.stderr).unwrap());
-        io::stderr().flush().unwrap();
+        stdout.flush().unwrap();
+        write!(stderr, "{}", str::from_utf8(&output.stderr).unwrap()).unwrap();
+        stderr.flush().unwrap();
       }
       CommandKind::NotFound(name) => {
-        eprintln!("{name}: command not found")
+        writeln!(stderr, "{name}: command not found").unwrap();
+        stderr.flush().unwrap();
       }
     }
   }
@@ -174,16 +181,19 @@ fn main() {
       let Some(command) = args.next() else { continue };
       enum State {
         RedirectStdout,
+        RedirectStderr,
         Arg,
       }
       use State::*;
       let mut state = Arg;
       let mut actual_args = vec![];
       let mut stdout: Box<dyn Write> = Box::new(std::io::stdout());
+      let mut stderr: Box<dyn Write> = Box::new(std::io::stderr());
       for arg in args {
         state = match state {
           Arg => match arg.as_str() {
             ">" | "1>" => RedirectStdout,
+            "2>" => RedirectStderr,
             _ => {
               actual_args.push(arg);
               Arg
@@ -193,9 +203,18 @@ fn main() {
             stdout = Box::new(std::fs::File::create(arg).unwrap());
             Arg
           }
+          RedirectStderr => {
+            stderr = Box::new(std::fs::File::create(arg).unwrap());
+            Arg
+          }
         }
       }
-      Command::from_split(command, actual_args, &paths).run(&paths, &mut control_flow, stdout);
+      Command::from_split(command, actual_args, &paths).run(
+        &paths,
+        &mut control_flow,
+        stdout,
+        stderr,
+      );
     } else {
       eprintln!("Syntax error");
       io::stderr().flush().unwrap();
