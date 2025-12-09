@@ -4,13 +4,13 @@ use std::{
   path::PathBuf,
 };
 
-fn search(paths: &Vec<PathBuf>, command: &str) -> Option<String> {
+fn search(paths: &Vec<PathBuf>, command: &str) -> Option<PathBuf> {
   for path in paths {
     if path.is_file() {
       let name = path.file_name()?.to_str()?;
       let is_exec = path.metadata().ok()?.permissions().mode() & 0o111 != 0;
       if name == command && is_exec {
-        return Some(path.display().to_string());
+        return Some(path.clone());
       }
     } else if path.is_dir() {
       let entries = std::fs::read_dir(path).ok()?;
@@ -20,7 +20,7 @@ fn search(paths: &Vec<PathBuf>, command: &str) -> Option<String> {
           let name = path.file_name()?.to_str()?;
           let is_exec = path.metadata().ok()?.permissions().mode() & 0o111 != 0;
           if name == command && is_exec {
-            return Some(path.display().to_string());
+            return Some(path.into());
           }
         }
       }
@@ -62,7 +62,7 @@ impl Builtin {
 
 enum CommandKind<'a> {
   Builtin(Builtin),
-  Program(String),
+  Program(PathBuf),
   NotFound(&'a str),
 }
 
@@ -108,7 +108,7 @@ impl<'a> Command<'a> {
               io::stdout().flush().unwrap();
             }
             CommandKind::Program(path) => {
-              println!("{path}");
+              println!("{}", path.display());
               io::stdout().flush().unwrap();
             }
             CommandKind::NotFound(name) => {
@@ -128,7 +128,7 @@ impl<'a> Command<'a> {
         io::stdout().flush().unwrap();
       }
       CommandKind::Program(path) => {
-        let output = std::process::Command::new(path)
+        let output = std::process::Command::new(path.file_name().unwrap())
           .args(&self.args)
           .output()
           .expect("Running command failed");
