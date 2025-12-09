@@ -36,6 +36,7 @@ pub fn split(s: &str) -> Result<Vec<String>, ParseError> {
           break;
         }
         Some('\'') => SingleQuoted,
+        Some('\"') => DoubleQuoted,
         Some(w) if w.is_whitespace() => {
           words.push(mem::take(&mut word));
           Delimiter
