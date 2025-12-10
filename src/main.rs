@@ -307,10 +307,25 @@ fn main() {
           completions.sort();
 
           if completions.len() > 1 {
-            if tab_count == 1 {
+            let first = completions[0];
+            let prefix = 'outer: {
+              for i in 0..=first.len() {
+                if !completions.iter().all(|&s| s.strip_prefix(&first[..i]).is_some()) {
+                  break 'outer &first[..i - 1];
+                }
+              }
+              first
+            };
+
+            if !prefix.is_empty() {
+              print!("{prefix}");
+              std::io::stdout().flush().unwrap();
+              cursor_position += prefix.len();
+              input.append(&mut prefix.chars().collect());
+            } else if tab_count == 1 {
               print!("\x07");
               std::io::stdout().flush().unwrap();
-            } else {
+            } else if tab_count == 0 {
               println!(
                 "\n{}",
                 completions
