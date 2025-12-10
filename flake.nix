@@ -16,6 +16,7 @@
         devShells.default = with pkgs;
           mkShell {
             buildInputs = [
+              codecrafters-cli
               openssl
               pkg-config
               perf

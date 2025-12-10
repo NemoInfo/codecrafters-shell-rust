@@ -188,6 +188,7 @@ fn main() {
     t
   };
 
+  let original_termios = termios;
   termios.c_lflag &= !(libc::ECHO | libc::ICANON);
 
   unsafe {
@@ -198,26 +199,28 @@ fn main() {
     print!("$ ");
     io::stdout().flush().unwrap();
 
-    let mut bytes = [0u8; 4];
+    let mut byte = [0u8; 1];
     let mut input = Vec::new();
     let mut cursor_position: usize = 0;
 
     loop {
-      let bytes_read = io::stdin().read(&mut bytes).unwrap();
+      io::stdin().read_exact(&mut byte).unwrap();
       use Key::*;
-      let key = match bytes[0] {
+      let key = match byte[0] {
         0x08 | 0x7F => Backspace,
         0x0C => CtrlL,
         0x04 => CtrlD,
         0x1B => {
-          if bytes_read >= 3 && bytes[1] == b'[' {
-            match bytes[2] {
+          io::stdin().read_exact(&mut byte).unwrap();
+          if byte[0] == b'[' {
+            io::stdin().read_exact(&mut byte).unwrap();
+            match byte[0] {
               b'A' => UpArrow,
               b'B' => DownArrow,
               b'C' => RightArrow,
               b'D' => LeftArrow,
               b'3' => Delete,
-              _ => panic!("{}", bytes[2]),
+              _ => panic!("{}", byte[0]),
             }
           } else {
             panic!();
@@ -275,10 +278,11 @@ fn main() {
             .collect::<Vec<_>>();
           if completions.len() == 1 {
             let completion = completions.first().unwrap();
-            cursor_position += completion.len();
+            cursor_position += completion.len() + 1;
             input.append(&mut completion.chars().collect());
+            input.push(' ');
 
-            print!("{completion}");
+            print!("{completion} ");
             std::io::stdout().flush().unwrap();
           }
         }
@@ -355,5 +359,9 @@ fn main() {
       eprintln!("Syntax error");
       io::stderr().flush().unwrap();
     }
+  }
+
+  unsafe {
+    libc::tcsetattr(fd, libc::TCSANOW, &original_termios);
   }
 }
