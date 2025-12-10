@@ -1,5 +1,3 @@
-#![feature(vec_try_remove)]
-
 use std::{
   io::{self, Read, Write},
   os::{fd::AsRawFd, unix::fs::PermissionsExt},
@@ -175,6 +173,7 @@ enum Key {
   UpArrow,
   DownArrow,
   CtrlL,
+  CtrlD,
 }
 
 fn main() {
@@ -209,6 +208,7 @@ fn main() {
       let key = match bytes[0] {
         0x08 | 0x7F => Backspace,
         0x0C => CtrlL,
+        0x04 => CtrlD,
         0x1B => {
           if bytes_read >= 3 && bytes[1] == b'[' {
             match bytes[2] {
@@ -248,14 +248,16 @@ fn main() {
           std::io::stdout().flush().unwrap();
         }
         Backspace => {
-          if input.try_remove(cursor_position - 1).is_some() {
+          if 0 < cursor_position && cursor_position <= input.len() {
+            input.remove(cursor_position - 1);
             cursor_position -= 1;
             print!("\x08\x1B[1P");
             std::io::stdout().flush().unwrap();
           }
         }
         Delete => {
-          if input.try_remove(cursor_position).is_some() {
+          if cursor_position < input.len() {
+            input.remove(cursor_position);
             print!("\x1B[1P");
             std::io::stdout().flush().unwrap();
           }
@@ -282,6 +284,12 @@ fn main() {
         }
         CtrlL => {
           input = "clear".chars().collect();
+          break;
+        }
+        CtrlD => {
+          println!();
+          std::io::stdout().flush().unwrap();
+          input = "exit".chars().collect();
           break;
         }
         _ => todo!(),
