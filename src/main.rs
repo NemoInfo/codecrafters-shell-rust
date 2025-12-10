@@ -1,4 +1,5 @@
 use std::{
+  collections::HashSet,
   io::{self, Read, Write},
   os::{fd::AsRawFd, unix::fs::PermissionsExt},
   path::PathBuf,
@@ -224,6 +225,7 @@ fn main() {
     let mut byte = [0u8; 1];
     let mut input = Vec::new();
     let mut cursor_position: usize = 0;
+    let mut tab_count = 0;
 
     loop {
       io::stdin().read_exact(&mut byte).unwrap();
@@ -291,18 +293,38 @@ fn main() {
           break;
         }
         Tab => {
+          tab_count = (tab_count + 1) % 2;
           let input_str: String = input.iter().collect();
           let mut completions = Builtin::TO_STRING
             .into_iter()
             .filter_map(|x| x.strip_prefix(&input_str))
             .collect::<Vec<_>>();
-          if completions.is_empty() {
-            completions =
-              all_commands.iter().filter_map(|x| x.strip_prefix(&input_str)).collect::<Vec<_>>();
-          }
+          completions.append(
+            &mut all_commands.iter().filter_map(|x| x.strip_prefix(&input_str)).collect::<Vec<_>>(),
+          );
+          let completions: HashSet<&str> = HashSet::from_iter(completions);
+          let mut completions = Vec::from_iter(completions);
+          completions.sort();
 
+          if completions.len() > 1 {
+            if tab_count == 1 {
+              print!("\x07");
+              std::io::stdout().flush().unwrap();
+            } else {
+              println!(
+                "\n{}",
+                completions
+                  .iter()
+                  .map(|&x| input.iter().collect::<String>() + x)
+                  .collect::<Vec<_>>()
+                  .join("  ")
+              );
+              print!("$ {}", input.iter().collect::<String>());
+              std::io::stdout().flush().unwrap();
+            }
+          }
           if completions.len() == 1 {
-            let completion = completions.first().unwrap();
+            let completion = completions[0];
             cursor_position += completion.len() + 1;
             input.append(&mut completion.chars().collect());
             input.push(' ');
