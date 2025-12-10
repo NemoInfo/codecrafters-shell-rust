@@ -32,6 +32,27 @@ fn search(paths: &Vec<PathBuf>, command: &str) -> Option<PathBuf> {
   None
 }
 
+fn all_commands(paths: &Vec<PathBuf>) -> Vec<String> {
+  let mut res = vec![];
+  for path in paths {
+    if path.is_file() {
+      if path.metadata().unwrap().permissions().mode() & 0o111 != 0 {
+        res.push(path.file_name().unwrap().to_str().unwrap().to_owned());
+      }
+    } else if path.is_dir() {
+      let entries = std::fs::read_dir(path).unwrap();
+      for entry in entries {
+        let path = entry.unwrap().path();
+        if path.is_file() && path.metadata().unwrap().permissions().mode() & 0o111 != 0 {
+          res.push(path.file_name().unwrap().to_str().unwrap().to_owned());
+        }
+      }
+    }
+  }
+
+  res
+}
+
 #[repr(usize)]
 #[derive(Clone, Copy)]
 enum Builtin {
@@ -179,6 +200,7 @@ enum Key {
 fn main() {
   let path = std::env::var("PATH").unwrap();
   let paths: Vec<_> = std::env::split_paths(&path).collect();
+  let all_commands = all_commands(&paths);
   let mut control_flow = ControlFlow::Repl;
 
   let fd = io::stdin().as_raw_fd();
@@ -270,10 +292,15 @@ fn main() {
         }
         Tab => {
           let input_str: String = input.iter().collect();
-          let completions = Builtin::TO_STRING
+          let mut completions = Builtin::TO_STRING
             .into_iter()
             .filter_map(|x| x.strip_prefix(&input_str))
             .collect::<Vec<_>>();
+          if completions.is_empty() {
+            completions =
+              all_commands.iter().filter_map(|x| x.strip_prefix(&input_str)).collect::<Vec<_>>();
+          }
+
           if completions.len() == 1 {
             let completion = completions.first().unwrap();
             cursor_position += completion.len() + 1;
