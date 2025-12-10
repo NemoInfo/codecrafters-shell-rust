@@ -233,9 +233,7 @@ fn main() {
 
       match key {
         Char(ch) => {
-          print!("\x1B[4h");
-          print!("{}", ch);
-          print!("\x1B[4l");
+          print!("\x1B[4h{}\x1B[4l", ch);
           std::io::stdout().flush().unwrap();
           input.insert(cursor_position, ch);
           cursor_position += 1;
@@ -283,6 +281,9 @@ fn main() {
             input.push(' ');
 
             print!("{completion} ");
+            std::io::stdout().flush().unwrap();
+          } else if completions.is_empty() {
+            print!("\x07");
             std::io::stdout().flush().unwrap();
           }
         }
