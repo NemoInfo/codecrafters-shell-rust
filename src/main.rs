@@ -224,7 +224,7 @@ fn main() {
           }
         }
         b'\t' => Tab,
-        b'\n' => Newline,
+        b'\n' | b'\r' => Newline,
         ch => Char(ch as char),
       };
 
