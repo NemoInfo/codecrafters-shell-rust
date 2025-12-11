@@ -97,7 +97,14 @@ impl Command {
     paths: &Vec<PathBuf>,
   ) -> Result<(Self, CommandOut, CommandErr), ()> {
     let (stdout, stderr) = parse_reditections(&mut args)?;
-    Ok((Self { kind: CommandKind::parse(&command, paths), args }, stdout, stderr))
+    Ok((
+      Self {
+        kind: CommandKind::parse(&command, paths),
+        args,
+      },
+      stdout,
+      stderr,
+    ))
   }
 
   fn run(
@@ -108,7 +115,10 @@ impl Command {
     mut stderr: CommandErr,
     stdin: Option<CommandIn>,
   ) -> Option<Child> {
-    let Self { kind, args } = self;
+    let Self {
+      kind,
+      args,
+    } = self;
     match kind {
       CommandKind::Builtin(builtin) => {
         builtin.run(control_flow, stdout, stderr, stdin, paths, args);
@@ -270,6 +280,9 @@ impl Key {
 fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
   let mut input = Vec::new();
   let mut cursor_position: usize = 0;
+  let history_file = std::fs::read_to_string(HISTORY_FILE_NAME).ok();
+  let history = history_file.as_deref().map(|s| s.lines().collect::<Vec<_>>());
+  let mut history_position: usize = history.as_ref().map(|s| s.len() - 1).unwrap_or(0);
   let mut tab_count = 0;
 
   loop {
@@ -380,7 +393,32 @@ fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
         input = "exit".chars().collect();
         break;
       }
-      _ => todo!(),
+      UpArrow | DownArrow => {
+        let Some(history) = &history else {
+          eprintln!("\nhistory: Could not read from history file {HISTORY_FILE_NAME}");
+          print!("$ ");
+          print!("{}", String::from_iter(&input));
+          std::io::stdout().flush().unwrap();
+          continue;
+        };
+        if history.is_empty() {
+          continue;
+        }
+        if let DownArrow = key {
+          history_position = (history_position + 1) % history.len()
+        }
+        let completion = history[history_position].split("  ").last().unwrap();
+        if let UpArrow = key {
+          history_position = history_position.wrapping_sub(1).min(history.len() - 1)
+        }
+        if !input.is_empty() {
+          print!("\x1B[{}D\x1B[{}P", input.len(), input.len());
+        }
+        print!("{completion}");
+        input = completion.chars().collect();
+        cursor_position = completion.len();
+        std::io::stdout().flush().unwrap();
+      }
     }
   }
 
@@ -454,7 +492,11 @@ fn main() {
         io::stderr().flush().unwrap();
         break;
       };
-      let command = if !args.is_empty() { args.remove(0) } else { continue };
+      let command = if !args.is_empty() {
+        args.remove(0)
+      } else {
+        continue;
+      };
       let Ok((mut cmd, mut stdout, stderr)) = Command::from_split(command, args, &paths) else {
         todo!("handle command parsing error");
       };
