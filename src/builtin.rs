@@ -1,12 +1,13 @@
 use std::fmt::Display;
 use std::fs::File;
 use std::path::PathBuf;
+use std::process::ChildStdout;
 use std::{io::Write, str::FromStr};
 
 use crate::{CommandKind, ControlFlow};
 
 #[repr(usize)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum Builtin {
   Exit,
   Type,
@@ -23,7 +24,7 @@ impl Builtin {
     control_flow: &mut ControlFlow,
     stdout: &mut Option<File>,
     stderr: &mut Option<File>,
-    _stdin: Option<&[u8]>,
+    _stdin: Option<ChildStdout>,
     paths: &Vec<PathBuf>,
     args: &Vec<String>,
   ) -> Vec<u8> {

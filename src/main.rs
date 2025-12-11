@@ -4,7 +4,7 @@ use std::{
   io::{self, Read, Write},
   os::{fd::AsRawFd, unix::fs::PermissionsExt},
   path::PathBuf,
-  process::Stdio,
+  process::{Child, ChildStdout, Stdio},
 };
 
 mod split;
@@ -59,6 +59,7 @@ fn executables(paths: &Vec<PathBuf>) -> Vec<String> {
   res
 }
 
+#[derive(Debug)]
 enum CommandKind {
   Builtin(Builtin),
   Program(PathBuf),
@@ -83,11 +84,17 @@ pub enum ControlFlow {
   Exit,
 }
 
+#[derive(Debug)]
 struct Command {
   kind: CommandKind,
   args: Vec<String>,
   stdout: Option<File>,
   stderr: Option<File>,
+}
+
+enum CommandOutput {
+  Bytes(Vec<u8>),
+  Child(Child),
 }
 
 impl Command {
@@ -100,17 +107,18 @@ impl Command {
     &mut self,
     paths: &Vec<PathBuf>,
     control_flow: &mut ControlFlow,
-    stdin: Option<&[u8]>,
+    stdin: Option<ChildStdout>,
     piped: bool,
-  ) -> Vec<u8> {
+  ) -> CommandOutput {
     let Self { kind, args, stdout, stderr } = self;
     match kind {
       CommandKind::Builtin(builtin) => {
-        builtin.run(control_flow, stdout, stderr, stdin, paths, args)
+        CommandOutput::Bytes(builtin.run(control_flow, stdout, stderr, stdin, paths, args))
       }
       CommandKind::Program(path) => {
         let stdout = match stdout.take() {
           Some(stdout) => Stdio::from(stdout),
+          None if piped => Stdio::piped(),
           None => Stdio::inherit(),
         };
         let stderr = match stderr.take() {
@@ -119,29 +127,14 @@ impl Command {
         };
 
         let mut cmd = std::process::Command::new(path.file_name().unwrap());
+        cmd.args(args);
         cmd.stdout(stdout);
         cmd.stderr(stderr);
-        if piped {
-          cmd.stdout(std::process::Stdio::piped());
+        if let Some(stdin) = stdin {
+          cmd.stdin(stdin);
         }
 
-        let output = if let Some(input) = stdin {
-          let mut child = cmd
-            .args(args)
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .expect("Spawning command failed");
-
-          if let Some(mut stdin) = child.stdin.take() {
-            _ = stdin.write_all(input);
-          }
-
-          child.wait_with_output().expect("Running command failed")
-        } else {
-          cmd.args(args).output().expect("Running command failed")
-        };
-
-        output.stdout
+        CommandOutput::Child(cmd.spawn().expect("spawn"))
       }
       CommandKind::NotFound(name) => {
         let mut stderr = stderr
@@ -150,7 +143,7 @@ impl Command {
           .unwrap_or(Box::new(std::io::stdout()) as Box<dyn Write>);
         writeln!(stderr, "{name}: command not found").unwrap();
         stderr.flush().unwrap();
-        vec![]
+        CommandOutput::Bytes(vec![])
       }
     }
   }
@@ -376,22 +369,30 @@ fn main() {
     let mut command_strings = input.split("|").peekable();
 
     let mut stdin = None;
+    let mut child_handles = vec![];
     while let Some(command_string) = command_strings.next() {
       if let Ok(mut args) = split(command_string) {
         let command = if !args.is_empty() { args.remove(0) } else { continue };
         let Ok(mut cmd) = Command::from_split(command, args, &paths) else { continue };
+        let piped = command_strings.peek().is_some();
 
-        stdin = Some(cmd.run(
-          &paths,
-          &mut control_flow,
-          stdin.as_deref(),
-          command_strings.peek().is_some(),
-        ));
+        stdin = match cmd.run(&paths, &mut control_flow, stdin, piped) {
+          CommandOutput::Bytes(_) => None,
+          CommandOutput::Child(child) => {
+            child_handles.push(child);
+            let len = child_handles.len();
+            if piped { child_handles[len - 1].stdout.take() } else { break }
+          }
+        }
       } else {
         eprintln!("Syntax error");
         io::stderr().flush().unwrap();
         break;
       }
+    }
+
+    while let Some(child) = child_handles.pop() {
+      child.wait_with_output().expect("complete");
     }
   }
 
