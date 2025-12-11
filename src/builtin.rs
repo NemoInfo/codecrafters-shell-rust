@@ -1,10 +1,8 @@
 use std::fmt::Display;
-use std::fs::File;
 use std::path::PathBuf;
-use std::process::ChildStdout;
 use std::{io::Write, str::FromStr};
 
-use crate::{CommandKind, ControlFlow};
+use crate::{CommandErr, CommandIn, CommandKind, CommandOut, ControlFlow};
 
 #[repr(usize)]
 #[derive(Debug, Clone, Copy)]
@@ -22,21 +20,12 @@ impl Builtin {
   pub fn run(
     &self,
     control_flow: &mut ControlFlow,
-    stdout: &mut Option<File>,
-    stderr: &mut Option<File>,
-    _stdin: Option<ChildStdout>,
+    mut stdout: CommandOut,
+    mut stderr: CommandErr,
+    _stdin: Option<CommandIn>,
     paths: &Vec<PathBuf>,
     args: &Vec<String>,
-  ) -> Vec<u8> {
-    let mut stdout = stdout
-      .as_mut()
-      .map(|x| Box::new(x) as Box<dyn Write>)
-      .unwrap_or(Box::new(std::io::stdout()) as Box<dyn Write>);
-    let mut stderr = stderr
-      .as_mut()
-      .map(|x| Box::new(x) as Box<dyn Write>)
-      .unwrap_or(Box::new(std::io::stdout()) as Box<dyn Write>);
-
+  ) {
     match self {
       Builtin::Exit => *control_flow = ControlFlow::Exit,
       Builtin::Type => {
@@ -61,7 +50,6 @@ impl Builtin {
         });
       }
     }
-    vec![]
   }
 }
 

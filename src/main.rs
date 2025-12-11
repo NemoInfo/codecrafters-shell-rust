@@ -1,10 +1,10 @@
 use std::{
   collections::HashSet,
   fs::{File, OpenOptions},
-  io::{self, Read, Write},
+  io::{self, PipeReader, PipeWriter, Read, Stderr, Stdout, Write},
   os::{fd::AsRawFd, unix::fs::PermissionsExt},
   path::PathBuf,
-  process::{Child, ChildStdout, Stdio},
+  process::{Child, Stdio},
 };
 
 mod split;
@@ -88,44 +88,33 @@ pub enum ControlFlow {
 struct Command {
   kind: CommandKind,
   args: Vec<String>,
-  stdout: Option<File>,
-  stderr: Option<File>,
-}
-
-enum CommandOutput {
-  Bytes(Vec<u8>),
-  Child(Child),
 }
 
 impl Command {
-  fn from_split(command: String, mut args: Vec<String>, paths: &Vec<PathBuf>) -> Result<Self, ()> {
-    let [stdout, stderr] = parse_reditections(&mut args)?;
-    Ok(Self { kind: CommandKind::parse(&command, paths), args, stdout, stderr })
+  fn from_split(
+    command: String,
+    mut args: Vec<String>,
+    paths: &Vec<PathBuf>,
+  ) -> Result<(Self, CommandOut, CommandErr), ()> {
+    let (stdout, stderr) = parse_reditections(&mut args)?;
+    Ok((Self { kind: CommandKind::parse(&command, paths), args }, stdout, stderr))
   }
 
   fn run(
     &mut self,
     paths: &Vec<PathBuf>,
     control_flow: &mut ControlFlow,
-    stdin: Option<ChildStdout>,
-    piped: bool,
-  ) -> CommandOutput {
-    let Self { kind, args, stdout, stderr } = self;
+    stdout: CommandOut,
+    mut stderr: CommandErr,
+    stdin: Option<CommandIn>,
+  ) -> Option<Child> {
+    let Self { kind, args } = self;
     match kind {
       CommandKind::Builtin(builtin) => {
-        CommandOutput::Bytes(builtin.run(control_flow, stdout, stderr, stdin, paths, args))
+        builtin.run(control_flow, stdout, stderr, stdin, paths, args);
+        None
       }
       CommandKind::Program(path) => {
-        let stdout = match stdout.take() {
-          Some(stdout) => Stdio::from(stdout),
-          None if piped => Stdio::piped(),
-          None => Stdio::inherit(),
-        };
-        let stderr = match stderr.take() {
-          Some(stderr) => Stdio::from(stderr),
-          None => Stdio::inherit(),
-        };
-
         let mut cmd = std::process::Command::new(path.file_name().unwrap());
         cmd.args(args);
         cmd.stdout(stdout);
@@ -133,18 +122,100 @@ impl Command {
         if let Some(stdin) = stdin {
           cmd.stdin(stdin);
         }
-
-        CommandOutput::Child(cmd.spawn().expect("spawn"))
+        Some(cmd.spawn().expect("spawn"))
       }
       CommandKind::NotFound(name) => {
-        let mut stderr = stderr
-          .as_mut()
-          .map(|x| Box::new(x) as Box<dyn Write>)
-          .unwrap_or(Box::new(std::io::stdout()) as Box<dyn Write>);
         writeln!(stderr, "{name}: command not found").unwrap();
         stderr.flush().unwrap();
-        CommandOutput::Bytes(vec![])
+        None
       }
+    }
+  }
+}
+
+#[derive(Debug)]
+#[allow(unused)]
+enum CommandIn {
+  File(File),
+  Pipe(PipeReader),
+}
+
+impl From<CommandIn> for Stdio {
+  fn from(inn: CommandIn) -> Self {
+    match inn {
+      CommandIn::File(file) => file.into(),
+      CommandIn::Pipe(pipe) => pipe.into(),
+    }
+  }
+}
+
+#[derive(Debug)]
+enum CommandOut {
+  File(File),
+  Pipe(PipeWriter),
+  Stdout(Stdout),
+}
+
+impl From<CommandOut> for Stdio {
+  fn from(out: CommandOut) -> Self {
+    match out {
+      CommandOut::File(file) => file.into(),
+      CommandOut::Pipe(pipe) => pipe.into(),
+      CommandOut::Stdout(out) => out.into(),
+    }
+  }
+}
+
+impl Write for CommandOut {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    match self {
+      CommandOut::File(file) => file.write(buf),
+      CommandOut::Pipe(pipe) => pipe.write(buf),
+      CommandOut::Stdout(out) => out.write(buf),
+    }
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    match self {
+      CommandOut::File(file) => file.flush(),
+      CommandOut::Pipe(pipe) => pipe.flush(),
+      CommandOut::Stdout(out) => out.flush(),
+    }
+  }
+}
+
+#[derive(Debug)]
+#[allow(unused)]
+enum CommandErr {
+  File(File),
+  Pipe(PipeWriter),
+  Stderr(Stderr),
+}
+
+impl From<CommandErr> for Stdio {
+  fn from(err: CommandErr) -> Self {
+    match err {
+      CommandErr::File(file) => file.into(),
+      CommandErr::Pipe(pipe) => pipe.into(),
+      CommandErr::Stderr(err) => err.into(),
+    }
+  }
+}
+
+impl Write for CommandErr {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    match self {
+      CommandErr::File(file) => file.write(buf),
+      CommandErr::Pipe(pipe) => pipe.write(buf),
+      CommandErr::Stderr(err) => err.write(buf),
+    }
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    match self {
+      CommandErr::File(file) => file.flush(),
+      CommandErr::Pipe(pipe) => pipe.flush(),
+      CommandErr::Stderr(err) => err.flush(),
     }
   }
 }
@@ -316,20 +387,22 @@ fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
   String::from_iter(input)
 }
 
-fn parse_reditections(args_vec: &mut Vec<String>) -> Result<[Option<File>; 2], ()> {
+fn parse_reditections(args_vec: &mut Vec<String>) -> Result<(CommandOut, CommandErr), ()> {
+  use CommandErr as Ce;
+  use CommandOut as Co;
   let mut args = args_vec.iter();
-  let mut stdout = None;
-  let mut stderr = None;
+  let mut stdout = Co::Stdout(std::io::stdout());
+  let mut stderr = Ce::Stderr(std::io::stderr());
   let mut append = OpenOptions::new();
   let mut actual_args = vec![];
   append.append(true).create(true);
 
   while let Some(arg) = args.next() {
     match arg.as_str() {
-      ">" | "1>" => stdout = Some(File::create(args.next().ok_or(())?).map_err(|_| ())?),
-      "2>" => stderr = Some(File::create(args.next().ok_or(())?).map_err(|_| ())?),
-      ">>" | "1>>" => stdout = Some(append.open(args.next().ok_or(())?).map_err(|_| ())?),
-      "2>>" => stderr = Some(append.open(args.next().ok_or(())?).map_err(|_| ())?),
+      ">" | "1>" => stdout = Co::File(File::create(args.next().ok_or(())?).map_err(|_| ())?),
+      "2>" => stderr = Ce::File(File::create(args.next().ok_or(())?).map_err(|_| ())?),
+      ">>" | "1>>" => stdout = Co::File(append.open(args.next().ok_or(())?).map_err(|_| ())?),
+      "2>>" => stderr = Ce::File(append.open(args.next().ok_or(())?).map_err(|_| ())?),
       _ => {
         actual_args.push(arg.clone()); // PERF: this is a bit wastefull
         continue;
@@ -338,7 +411,7 @@ fn parse_reditections(args_vec: &mut Vec<String>) -> Result<[Option<File>; 2], (
   }
 
   *args_vec = actual_args;
-  Ok([stdout, stderr])
+  Ok((stdout, stderr))
 }
 
 fn main() {
@@ -347,16 +420,15 @@ fn main() {
   let executables = executables(&paths);
   let mut control_flow = ControlFlow::Repl;
 
+  // Set terminal mode
   let fd = io::stdin().as_raw_fd();
   let mut termios = unsafe {
     let mut t = std::mem::zeroed();
     libc::tcgetattr(fd, &mut t);
     t
   };
-
   let original_termios = termios;
   termios.c_lflag &= !(libc::ECHO | libc::ICANON);
-
   unsafe {
     libc::tcsetattr(fd, libc::TCSANOW, &termios);
   }
@@ -366,36 +438,39 @@ fn main() {
     io::stdout().flush().unwrap();
 
     let input: String = handle_input(io::stdin(), &executables);
-    let mut command_strings = input.split("|").peekable();
+    let mut commands = input.split("|").peekable();
 
-    let mut stdin = None;
+    let (mut pipe_reader, mut pipe_writer) = std::io::pipe().unwrap();
     let mut child_handles = vec![];
-    while let Some(command_string) = command_strings.next() {
-      if let Ok(mut args) = split(command_string) {
-        let command = if !args.is_empty() { args.remove(0) } else { continue };
-        let Ok(mut cmd) = Command::from_split(command, args, &paths) else { continue };
-        let piped = command_strings.peek().is_some();
-
-        stdin = match cmd.run(&paths, &mut control_flow, stdin, piped) {
-          CommandOutput::Bytes(_) => None,
-          CommandOutput::Child(child) => {
-            child_handles.push(child);
-            let len = child_handles.len();
-            if piped { child_handles[len - 1].stdout.take() } else { break }
-          }
-        }
-      } else {
+    let mut stdin = None;
+    while let Some(command_string) = commands.next() {
+      let Ok(mut args) = split(command_string) else {
         eprintln!("Syntax error");
         io::stderr().flush().unwrap();
         break;
+      };
+      let command = if !args.is_empty() { args.remove(0) } else { continue };
+      let Ok((mut cmd, mut stdout, stderr)) = Command::from_split(command, args, &paths) else {
+        todo!("handle command parsing error");
+      };
+      stdout = if commands.peek().is_some() { CommandOut::Pipe(pipe_writer) } else { stdout };
+      if let Some(child) = cmd.run(&paths, &mut control_flow, stdout, stderr, stdin) {
+        child_handles.push(child);
       }
+      stdin = Some(CommandIn::Pipe(pipe_reader));
+      (pipe_reader, pipe_writer) = std::io::pipe().unwrap();
     }
 
-    while let Some(child) = child_handles.pop() {
-      child.wait_with_output().expect("complete");
+    if let Some(mut child) = child_handles.pop() {
+      _ = child.wait().expect("complete");
+      for mut child in child_handles {
+        child.kill().unwrap();
+        _ = child.wait().expect("complete");
+      }
     }
   }
 
+  // Unset terminal mode
   unsafe {
     libc::tcsetattr(fd, libc::TCSANOW, &original_termios);
   }
