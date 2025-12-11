@@ -53,8 +53,24 @@ impl Builtin {
         });
       }
       Builtin::History => {
-        let history = std::fs::read(HISTORY_FILE_NAME).unwrap();
-        stdout.write_all(&history).unwrap();
+        let Ok(history) = std::fs::read_to_string(HISTORY_FILE_NAME) else {
+          writeln!(stderr, "history: could not read history file `{HISTORY_FILE_NAME}`").unwrap();
+          return;
+        };
+
+        let lines = history.lines().collect::<Vec<_>>();
+        let n = match args.first().map(|s| s.parse::<usize>()) {
+          Some(Ok(n)) => n,
+          Some(Err(_)) => {
+            writeln!(stderr, "history: argument expected type usize found `{}`", args[0])
+              .unwrap();
+            return;
+          }
+          None => lines.len(),
+        };
+        let shown = lines.iter().rev().take(n).rev().cloned().collect::<Vec<_>>().join("\n");
+
+        writeln!(stdout, "{shown}").unwrap();
       }
     }
   }
