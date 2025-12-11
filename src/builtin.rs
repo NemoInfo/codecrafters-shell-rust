@@ -1,0 +1,87 @@
+use std::fmt::Display;
+use std::fs::File;
+use std::path::PathBuf;
+use std::{io::Write, str::FromStr};
+
+use crate::{CommandKind, ControlFlow};
+
+#[repr(usize)]
+#[derive(Clone, Copy)]
+pub enum Builtin {
+  Exit,
+  Type,
+  Echo,
+  Pwd,
+  Cd,
+}
+
+impl Builtin {
+  pub const TO_STRING: [&'static str; 5] = ["exit", "type", "echo", "pwd", "cd"];
+
+  pub fn run(
+    &self,
+    control_flow: &mut ControlFlow,
+    stdout: &mut Option<File>,
+    stderr: &mut Option<File>,
+    _stdin: Option<&[u8]>,
+    paths: &Vec<PathBuf>,
+    args: &Vec<String>,
+  ) -> Vec<u8> {
+    let mut stdout = stdout
+      .as_mut()
+      .map(|x| Box::new(x) as Box<dyn Write>)
+      .unwrap_or(Box::new(std::io::stdout()) as Box<dyn Write>);
+    let mut stderr = stderr
+      .as_mut()
+      .map(|x| Box::new(x) as Box<dyn Write>)
+      .unwrap_or(Box::new(std::io::stdout()) as Box<dyn Write>);
+
+    match self {
+      Builtin::Exit => *control_flow = ControlFlow::Exit,
+      Builtin::Type => {
+        for arg in args {
+          match CommandKind::parse(arg, paths) {
+            CommandKind::Builtin(name) => writeln!(stdout, "{name} is a shell builtin").unwrap(),
+            CommandKind::Program(path) => writeln!(stdout, "{}", path.display()).unwrap(),
+            CommandKind::NotFound(name) => writeln!(stderr, "{name}: not found").unwrap(),
+          }
+        }
+      }
+      Builtin::Echo => writeln!(stdout, "{}", args.join(" ")).unwrap(),
+      Builtin::Pwd => {
+        let path = std::env::current_dir().unwrap();
+        writeln!(stdout, "{}", path.display()).unwrap();
+      }
+      Builtin::Cd => {
+        let home = std::env::var("HOME").unwrap();
+        let path: PathBuf = args.first().unwrap_or(&"~".to_owned()).replace("~", &home).into();
+        std::env::set_current_dir(&path).unwrap_or_else(|_| {
+          writeln!(stderr, "cd: {}: No such file or directory", path.display()).unwrap();
+        });
+      }
+    }
+    vec![]
+  }
+}
+
+impl FromStr for Builtin {
+  type Err = ();
+  fn from_str(command: &str) -> Result<Self, Self::Err> {
+    use Builtin::*;
+    let command = command.trim();
+    match command {
+      "exit" => Ok(Exit),
+      "type" => Ok(Type),
+      "echo" => Ok(Echo),
+      "pwd" => Ok(Pwd),
+      "cd" => Ok(Cd),
+      _ => Err(()),
+    }
+  }
+}
+
+impl Display for Builtin {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(Self::TO_STRING[*self as usize])
+  }
+}
