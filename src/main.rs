@@ -415,6 +415,9 @@ fn parse_reditections(args_vec: &mut Vec<String>) -> Result<(CommandOut, Command
 }
 
 fn main() {
+  File::create(HISTORY_FILE_NAME).unwrap(); // reset history file
+  let mut history = OpenOptions::new().append(true).open(HISTORY_FILE_NAME).unwrap();
+  let mut num_history = 1;
   let path = std::env::var("PATH").unwrap();
   let paths: Vec<_> = std::env::split_paths(&path).collect();
   let executables = executables(&paths);
@@ -438,6 +441,8 @@ fn main() {
     io::stdout().flush().unwrap();
 
     let input: String = handle_input(io::stdin(), &executables);
+    writeln!(history, "    {num_history}  {input}").unwrap();
+    num_history += 1;
     let mut commands = input.split("|").peekable();
 
     let (mut pipe_reader, mut pipe_writer) = std::io::pipe().unwrap();

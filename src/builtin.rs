@@ -4,6 +4,8 @@ use std::{io::Write, str::FromStr};
 
 use crate::{CommandErr, CommandIn, CommandKind, CommandOut, ControlFlow};
 
+pub const HISTORY_FILE_NAME: &str = ".history";
+
 #[repr(usize)]
 #[derive(Debug, Clone, Copy)]
 pub enum Builtin {
@@ -50,7 +52,10 @@ impl Builtin {
           writeln!(stderr, "cd: {}: No such file or directory", path.display()).unwrap();
         });
       }
-      Builtin::History => {}
+      Builtin::History => {
+        let history = std::fs::read(HISTORY_FILE_NAME).unwrap();
+        stdout.write_all(&history).unwrap();
+      }
     }
   }
 }
