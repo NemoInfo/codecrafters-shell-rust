@@ -12,10 +12,11 @@ pub enum Builtin {
   Echo,
   Pwd,
   Cd,
+  History,
 }
 
 impl Builtin {
-  pub const TO_STRING: [&'static str; 5] = ["exit", "type", "echo", "pwd", "cd"];
+  pub const TO_STRING: [&'static str; 6] = ["exit", "type", "echo", "pwd", "cd", "history"];
 
   pub fn run(
     &self,
@@ -49,6 +50,7 @@ impl Builtin {
           writeln!(stderr, "cd: {}: No such file or directory", path.display()).unwrap();
         });
       }
+      Builtin::History => {}
     }
   }
 }
@@ -64,6 +66,7 @@ impl FromStr for Builtin {
       "echo" => Ok(Echo),
       "pwd" => Ok(Pwd),
       "cd" => Ok(Cd),
+      "history" => Ok(History),
       _ => Err(()),
     }
   }

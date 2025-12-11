@@ -134,8 +134,8 @@ impl Command {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
 enum CommandIn {
+  #[allow(unused)]
   File(File),
   Pipe(PipeReader),
 }
@@ -185,9 +185,9 @@ impl Write for CommandOut {
 }
 
 #[derive(Debug)]
-#[allow(unused)]
 enum CommandErr {
   File(File),
+  #[allow(unused)]
   Pipe(PipeWriter),
   Stderr(Stderr),
 }
