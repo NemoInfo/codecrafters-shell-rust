@@ -62,8 +62,7 @@ impl Builtin {
         let n = match args.first().map(|s| s.parse::<usize>()) {
           Some(Ok(n)) => n,
           Some(Err(_)) => {
-            writeln!(stderr, "history: argument expected type usize found `{}`", args[0])
-              .unwrap();
+            writeln!(stderr, "history: argument expected type usize found `{}`", args[0]).unwrap();
             return;
           }
           None => lines.len(),
