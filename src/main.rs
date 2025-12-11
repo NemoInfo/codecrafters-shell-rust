@@ -2,6 +2,7 @@ use std::{
   collections::HashSet,
   fs::{File, OpenOptions},
   io::{self, PipeReader, PipeWriter, Read, Stderr, Stdout, Write},
+  iter::once,
   os::{fd::AsRawFd, unix::fs::PermissionsExt},
   path::PathBuf,
   process::{Child, Stdio},
@@ -281,8 +282,8 @@ fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
   let mut input = Vec::new();
   let mut cursor_position: usize = 0;
   let history_file = std::fs::read_to_string(HISTORY_FILE_NAME).ok();
-  let history = history_file.as_deref().map(|s| s.lines().collect::<Vec<_>>());
-  let mut history_position: usize = history.as_ref().map(|s| s.len() - 1).unwrap_or(0);
+  let history = history_file.as_deref().map(|s| s.lines().chain(once("")).collect::<Vec<_>>());
+  let mut hist_pos = history.as_ref().map(Vec::len).unwrap_or(1) as isize - 1;
   let mut tab_count = 0;
 
   loop {
@@ -404,13 +405,11 @@ fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
         if history.is_empty() {
           continue;
         }
-        if let DownArrow = key {
-          history_position = (history_position + 1) % history.len()
-        }
-        let completion = history[history_position].split("  ").last().unwrap();
-        if let UpArrow = key {
-          history_position = history_position.wrapping_sub(1).min(history.len() - 1)
-        }
+
+        let dx = if let UpArrow = key { -1 } else { 1 };
+        hist_pos = (hist_pos + dx).clamp(0, history.len() as isize - 1);
+        let completion = history[hist_pos as usize].split("  ").last().unwrap();
+
         if !input.is_empty() {
           print!("\x1B[{}D\x1B[{}P", input.len(), input.len());
         }
@@ -479,6 +478,9 @@ fn main() {
     io::stdout().flush().unwrap();
 
     let input: String = handle_input(io::stdin(), &executables);
+    if input.is_empty() {
+      continue;
+    }
     writeln!(history, "    {num_history}  {input}").unwrap();
     num_history += 1;
     let mut commands = input.split("|").peekable();
