@@ -442,6 +442,11 @@ fn main() {
   let paths: Vec<_> = std::env::split_paths(&path).collect();
   let executables = executables(&paths);
   let mut state = State::new();
+  state.history = std::env::var("HISTFILE")
+    .ok()
+    .and_then(|path| std::fs::read_to_string(path).ok())
+    .map(|content| content.lines().map(String::from).collect())
+    .unwrap_or_default();
 
   // Set terminal mode
   let fd = io::stdin().as_raw_fd();
