@@ -447,6 +447,7 @@ fn main() {
     .and_then(|path| std::fs::read_to_string(path).ok())
     .map(|content| content.lines().map(String::from).collect())
     .unwrap_or_default();
+  state.history_append_position = state.history.len();
 
   // Set terminal mode
   let fd = io::stdin().as_raw_fd();
@@ -517,6 +518,8 @@ fn main() {
 
   if let Ok(histfile) = std::env::var("HISTFILE") {
     let mut histfile = OpenOptions::new().append(true).create(true).open(histfile).unwrap();
-    histfile.write_all((state.history.join("\n") + "\n").as_bytes()).expect("$HISTFILE write");
+    histfile
+      .write_all((state.history[state.history_append_position..].join("\n") + "\n").as_bytes())
+      .expect("$HISTFILE write");
   }
 }
