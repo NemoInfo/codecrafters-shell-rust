@@ -514,4 +514,9 @@ fn main() {
   unsafe {
     libc::tcsetattr(fd, libc::TCSANOW, &original_termios);
   }
+
+  if let Ok(histfile) = std::env::var("HISTFILE") {
+    let mut histfile = File::create(histfile).unwrap();
+    histfile.write_all((state.history.join("\n") + "\n").as_bytes()).expect("$HISTFILE write");
+  }
 }
