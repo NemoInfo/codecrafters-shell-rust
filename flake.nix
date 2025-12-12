@@ -26,7 +26,7 @@
                 }))
             ];
 
-            shellHook = "eval zsh";
+            shellHook = "exec zsh";
           };
       });
 }

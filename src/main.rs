@@ -9,6 +9,7 @@ use std::{
 };
 
 mod split;
+use anyhow::{Context, anyhow};
 use split::*;
 mod builtin;
 use builtin::*;
@@ -109,36 +110,32 @@ impl Command {
   }
 
   fn run(
-    &mut self,
+    self,
     paths: &Vec<PathBuf>,
-    control_flow: &mut ControlFlow,
+    state: &mut State,
     stdout: CommandOut,
     mut stderr: CommandErr,
     stdin: Option<CommandIn>,
-  ) -> Option<Child> {
-    let Self {
-      kind,
-      args,
-    } = self;
-    match kind {
+  ) -> anyhow::Result<Option<Child>> {
+    match self.kind {
       CommandKind::Builtin(builtin) => {
-        builtin.run(control_flow, stdout, stderr, stdin, paths, args);
-        None
+        builtin.run(state, stdout, stderr, stdin, paths, self.args).map(|_| None)
       }
       CommandKind::Program(path) => {
-        let mut cmd = std::process::Command::new(path.file_name().unwrap());
-        cmd.args(args);
+        let command = path.file_name().unwrap(); // guaranteed to exist by parsing
+        let mut cmd = std::process::Command::new(command);
+        cmd.args(self.args);
         cmd.stdout(stdout);
         cmd.stderr(stderr);
         if let Some(stdin) = stdin {
           cmd.stdin(stdin);
         }
-        Some(cmd.spawn().expect("spawn"))
+        Ok(Some(cmd.spawn().context("could not spawn child command")?))
       }
       CommandKind::NotFound(name) => {
-        writeln!(stderr, "{name}: command not found").unwrap();
-        stderr.flush().unwrap();
-        None
+        writeln!(stderr, "{name}: command not found")?;
+        stderr.flush()?;
+        Err(anyhow!("command not found"))
       }
     }
   }
@@ -278,12 +275,11 @@ impl Key {
   }
 }
 
-fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
+fn handle_input(state: &mut State, stdin: io::Stdin, executables: &[String]) -> String {
   let mut input = Vec::new();
   let mut cursor_position: usize = 0;
-  let history_file = std::fs::read_to_string(HISTORY_FILE_NAME).ok();
-  let history = history_file.as_deref().map(|s| s.lines().chain(once("")).collect::<Vec<_>>());
-  let mut hist_pos = history.as_ref().map(Vec::len).unwrap_or(1) as isize - 1;
+  let history = state.history.iter().map(String::as_str).chain(once("")).collect::<Vec<_>>();
+  let mut hist_pos = history.len() as isize - 1;
   let mut tab_count = 0;
 
   loop {
@@ -394,21 +390,10 @@ fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
         input = "exit".chars().collect();
         break;
       }
-      UpArrow | DownArrow => {
-        let Some(history) = &history else {
-          eprintln!("\nhistory: Could not read from history file {HISTORY_FILE_NAME}");
-          print!("$ ");
-          print!("{}", String::from_iter(&input));
-          std::io::stdout().flush().unwrap();
-          continue;
-        };
-        if history.is_empty() {
-          continue;
-        }
-
+      UpArrow | DownArrow if history.len() > 1 => {
         let dx = if let UpArrow = key { -1 } else { 1 };
         hist_pos = (hist_pos + dx).clamp(0, history.len() as isize - 1);
-        let completion = history[hist_pos as usize].split("  ").last().unwrap();
+        let completion = history[hist_pos as usize];
 
         if !input.is_empty() {
           print!("\x1B[{}D\x1B[{}P", input.len(), input.len());
@@ -418,6 +403,7 @@ fn handle_input(stdin: io::Stdin, executables: &[String]) -> String {
         cursor_position = completion.len();
         std::io::stdout().flush().unwrap();
       }
+      UpArrow | DownArrow => continue,
     }
   }
 
@@ -452,13 +438,10 @@ fn parse_reditections(args_vec: &mut Vec<String>) -> Result<(CommandOut, Command
 }
 
 fn main() {
-  File::create(HISTORY_FILE_NAME).unwrap(); // reset history file
-  let mut history = OpenOptions::new().append(true).open(HISTORY_FILE_NAME).unwrap();
-  let mut num_history = 1;
   let path = std::env::var("PATH").unwrap();
   let paths: Vec<_> = std::env::split_paths(&path).collect();
   let executables = executables(&paths);
-  let mut control_flow = ControlFlow::Repl;
+  let mut state = State::new();
 
   // Set terminal mode
   let fd = io::stdin().as_raw_fd();
@@ -473,16 +456,15 @@ fn main() {
     libc::tcsetattr(fd, libc::TCSANOW, &termios);
   }
 
-  while let ControlFlow::Repl = &control_flow {
+  while let ControlFlow::Repl = &state.control_flow {
     print!("$ ");
     io::stdout().flush().unwrap();
 
-    let input: String = handle_input(io::stdin(), &executables);
+    let input: String = handle_input(&mut state, io::stdin(), &executables);
     if input.is_empty() {
       continue;
     }
-    writeln!(history, "    {num_history}  {input}").unwrap();
-    num_history += 1;
+    state.history.push(input.clone());
     let mut commands = input.split("|").peekable();
 
     let (mut pipe_reader, mut pipe_writer) = std::io::pipe().unwrap();
@@ -499,13 +481,17 @@ fn main() {
       } else {
         continue;
       };
-      let Ok((mut cmd, mut stdout, stderr)) = Command::from_split(command, args, &paths) else {
+      let Ok((cmd, mut stdout, stderr)) = Command::from_split(command, args, &paths) else {
         todo!("handle command parsing error");
       };
       stdout = if commands.peek().is_some() { CommandOut::Pipe(pipe_writer) } else { stdout };
-      if let Some(child) = cmd.run(&paths, &mut control_flow, stdout, stderr, stdin) {
-        child_handles.push(child);
+
+      match cmd.run(&paths, &mut state, stdout, stderr, stdin) {
+        Ok(Some(child)) => child_handles.push(child),
+        Ok(None) => {}
+        Err(_) => break, // error was already piped into stderr upstream
       }
+
       stdin = Some(CommandIn::Pipe(pipe_reader));
       (pipe_reader, pipe_writer) = std::io::pipe().unwrap();
     }
