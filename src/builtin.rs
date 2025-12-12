@@ -112,24 +112,18 @@ impl Builtin {
           return Ok(());
         }
 
-        let shown = state
-          .history
-          .iter()
-          .enumerate()
-          .rev()
-          .take(n)
-          .rev()
-          .map(|(i, s)| format!("{:>5}  {s}", i + 1))
-          .collect::<Vec<_>>()
-          .join("\n");
+        let shown = state.history.iter().enumerate().rev().take(n).rev();
 
         if let Some(history_file_path) = w {
+          let shown = shown.map(|(_, s)| s.clone()).collect::<Vec<_>>().join("\n");
           std::fs::File::create(&history_file_path)
             .context(format!("unable to open file `{history_file_path}`"))?
-            .write_all(shown.as_bytes())
+            .write_all((shown + "\n").as_bytes())
             .context(format!("unable to write to file `{history_file_path}`"))?;
+          return Ok(());
         }
 
+        let shown = shown.map(|(i, s)| format!("{:>5}  {s}", i + 1)).collect::<Vec<_>>().join("\n");
         writeln!(stdout, "{shown}")?;
       }
     }
