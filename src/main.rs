@@ -516,7 +516,7 @@ fn main() {
   }
 
   if let Ok(histfile) = std::env::var("HISTFILE") {
-    let mut histfile = File::create(histfile).unwrap();
+    let mut histfile = OpenOptions::new().append(true).create(true).open(histfile).unwrap();
     histfile.write_all((state.history.join("\n") + "\n").as_bytes()).expect("$HISTFILE write");
   }
 }
