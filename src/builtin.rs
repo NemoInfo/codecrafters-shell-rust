@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::{io::Write, str::FromStr};
 
@@ -20,6 +21,7 @@ pub enum Builtin {
 pub struct State {
   pub control_flow: ControlFlow,
   pub history: Vec<String>,
+  pub history_append_position: usize,
 }
 
 impl State {
@@ -27,6 +29,7 @@ impl State {
     Self {
       control_flow: ControlFlow::Repl,
       history: vec![],
+      history_append_position: 0,
     }
   }
 }
@@ -83,7 +86,7 @@ impl Builtin {
       }
       Builtin::History => {
         let [mut r, mut w, mut a] = [None, None, None];
-        let mut n = state.history.len();
+        let mut n = None;
 
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -94,7 +97,7 @@ impl Builtin {
             val => {
               let val = val.parse().context(format!("could not parse number `{val}`"))?;
               args.next().map_or(Ok(()), |e| Err(anyhow!("unexpected argument `{e}`")))?;
-              n = val;
+              n = Some(val);
             }
           }
         }
@@ -104,6 +107,7 @@ impl Builtin {
         }
 
         if let Some(history_file_path) = r {
+          n.map_or(Ok(()), |n| Err(anyhow!("unexpected argument {n}")))?;
           state.history.append(
             &mut std::fs::read_to_string(&history_file_path)
               .map(|x| x.lines().map(str::to_owned).collect::<Vec<_>>())
@@ -112,6 +116,21 @@ impl Builtin {
           return Ok(());
         }
 
+        if let Some(history_file_path) = a {
+          n.map_or(Ok(()), |n| Err(anyhow!("unexpected argument {n}")))?;
+          let shown = state.history[state.history_append_position..].join("\n");
+          state.history_append_position = state.history[state.history_append_position..].len();
+          OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&history_file_path)
+            .context(format!("unable to open file `{history_file_path}`"))?
+            .write_all((shown + "\n").as_bytes())
+            .context(format!("unable to write to file `{history_file_path}`"))?;
+          return Ok(());
+        }
+
+        let n = n.unwrap_or(state.history.len());
         let shown = state.history.iter().enumerate().rev().take(n).rev();
 
         if let Some(history_file_path) = w {
@@ -123,8 +142,8 @@ impl Builtin {
           return Ok(());
         }
 
-        let shown = shown.map(|(i, s)| format!("{:>5}  {s}", i + 1)).collect::<Vec<_>>().join("\n");
-        writeln!(stdout, "{shown}")?;
+        let out = shown.map(|(i, s)| format!("{:>5}  {s}", i + 1)).collect::<Vec<_>>().join("\n");
+        writeln!(stdout, "{out}")?;
       }
     }
     Ok(())
